@@ -19,7 +19,7 @@ async function loadMatches() {
   for (const league of leagues) {
     try {
       const response = await fetch(
-        `https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${league.id}`
+        `https://www.thesportsdb.com/api/v1/json/123/eventsnextleague.php?id=${league.id}`
       );
 
       if (!response.ok) continue;
