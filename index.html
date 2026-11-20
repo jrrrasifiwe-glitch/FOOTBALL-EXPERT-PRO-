@@ -1,106 +1,175 @@
-
 <!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#101827">
-  <meta name="description" content="FOOTBALL EXPERT PRO : analyses et statistiques gratuites des matchs de football.">
   <title>FOOTBALL EXPERT PRO</title>
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
 
-<div class="app">
+<header class="header">
+  <h1>⚽ FOOTBALL EXPERT PRO</h1>
+  <p>Analyse statistique et pronostics football</p>
+</header>
 
-  <header class="header">
-    <h1>⚽ FOOTBALL EXPERT PRO</h1>
-    <p>Analyse intelligente des matchs de football</p>
-    <p id="today"></p>
-  </header>
+<nav class="navigation">
+  <button class="nav-btn active" data-page="dashboard">Accueil</button>
+  <button class="nav-btn" data-page="matches">Matchs</button>
+  <button class="nav-btn" data-page="analysis">Analyses</button>
+  <button class="nav-btn" data-page="history">Historique</button>
+  <button class="nav-btn" data-page="bookmaker">Cotes</button>
+</nav>
 
-  <nav class="navigation">
-    <button class="nav-btn active" data-page="dashboard">Tableau de bord</button>
-    <button class="nav-btn" data-page="matches">Matchs</button>
-    <button class="nav-btn" data-page="analysis">Analyses</button>
-    <button class="nav-btn" data-page="history">Historique</button>
-    <button class="nav-btn" data-page="bookmaker">Bookmakers</button>
-  </nav>
+<main class="container">
 
-  <main>
+  <!-- ACCUEIL -->
+  <section id="dashboard" class="page active">
+    <h2>Tableau de bord</h2>
 
-    <!-- TABLEAU DE BORD -->
-    <section id="dashboard" class="page active">
-      <h2>Tableau de bord</h2>
-
-      <div class="dashboard-cards">
-        <div class="card">
-          <h3>Matchs disponibles</h3>
-          <p id="matchCount">0</p>
-        </div>
-
-        <div class="card">
-          <h3>Analyses réalisées</h3>
-          <p id="analysisCount">0</p>
-        </div>
-
-        <div class="card">
-          <h3>Championnats</h3>
-          <p id="leagueCount">6</p>
-        </div>
+    <div class="dashboard-cards">
+      <div class="card">
+        <h3>Matchs disponibles</h3>
+        <p id="matchCount">0</p>
       </div>
 
-      <h3>Dernières analyses</h3>
-      <div id="recentAnalyses">
-        Aucune analyse enregistrée.
+      <div class="card">
+        <h3>Analyses réalisées</h3>
+        <p id="analysisCount">0</p>
       </div>
 
-      <h3>Graphique des pronostics</h3>
+      <div class="card">
+        <h3>Championnats</h3>
+        <p id="leagueCount">6</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Statistiques des analyses</h3>
       <canvas id="dashboardChart"></canvas>
-    </section>
+    </div>
 
-    <!-- MATCHS -->
-    <section id="matches" class="page">
-      <h2>Matchs à venir</h2>
-      <p>Rencontres disponibles dans les 6 championnats.</p>
+    <div class="card">
+      <h3>Analyses récentes</h3>
+      <div id="recentAnalyses">
+        Aucune analyse pour le moment.
+      </div>
+    </div>
+  </section>
+
+  <!-- MATCHS -->
+  <section id="matches" class="page">
+    <h2>Matchs de football</h2>
+
+    <div class="card">
+      <h3>Analyse manuelle</h3>
+      <p>Choisis deux équipes pour lancer une analyse.</p>
+
+      <label for="manualHome">Équipe à domicile</label>
+      <input
+        type="text"
+        id="manualHome"
+        placeholder="Exemple : Athletic Bilbao"
+      >
+
+      <label for="manualAway">Équipe à l'extérieur</label>
+      <input
+        type="text"
+        id="manualAway"
+        placeholder="Exemple : Espanyol"
+      >
+
+      <button id="manualAnalyzeButton" type="button">
+        ANALYSER LES DEUX ÉQUIPES
+      </button>
+    </div>
+
+    <div class="card">
+      <h3>Matchs disponibles</h3>
       <div id="matchList">
         Chargement des matchs...
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- ANALYSES -->
-    <section id="analysis" class="page">
-      <h2>Analyse des matchs</h2>
+  <!-- ANALYSES -->
+  <section id="analysis" class="page">
+    <h2>Résultats de l'analyse</h2>
 
-      <div id="analysisContent">
-        <p>Sélectionne un match dans la rubrique Matchs pour commencer.</p>
+    <div id="analysisContent">
+      <div class="card">
+        <h3>Pronostics 1X2</h3>
+        <p>1 : Victoire domicile</p>
+        <p>X : Match nul</p>
+        <p>2 : Victoire extérieur</p>
+        <p>Les probabilités apparaîtront après l'analyse.</p>
       </div>
 
-      <div class="charts">
-        <div class="card">
-          <h3>Probabilités 1X2</h3>
-          <canvas id="resultChart"></canvas>
-        </div>
+      <div class="card">
+        <h3>BTTS — Les deux équipes marquent</h3>
+        <p>Oui : en attente de l'analyse</p>
+        <p>Non : en attente de l'analyse</p>
+      </div>
 
-        <div class="card">
-          <h3>BTTS et buts</h3>
-          <canvas id="goalsChart"></canvas>
-        </div>
+      <div class="card">
+        <h3>Over / Under 2,5 buts</h3>
+        <p>Over 2,5 : en attente de l'analyse</p>
+        <p>Under 2,5 : en attente de l'analyse</p>
+      </div>
 
-        <div class="card">
-          <h3>Scores exacts</h3>
-          <canvas id="scoreChart"></canvas>
+      <div class="card">
+        <h3>Top 10 des scores exacts</h3>
+        <div id="scorePredictions">
+          Les scores seront affichés après l'analyse.
         </div>
       </div>
-    </section>
 
-    <!-- HISTORIQUE -->
-    <section id="history" class="page">
-      <h2>Historique des analyses</h2>
+      <div class="card">
+        <h3>Les 5 derniers matchs — équipe domicile</h3>
+        <div id="homeLastFive">
+          En attente des données.
+        </div>
+      </div>
 
-      <p>Retrouve ici les analyses enregistrées sur cet appareil.</p>
+      <div class="card">
+        <h3>Les 5 derniers matchs — équipe extérieure</h3>
+        <div id="awayLastFive">
+          En attente des données.
+        </div>
+      </div>
 
+      <div class="card">
+        <h3>Conseil du bot</h3>
+        <div id="botAdvice">
+          Le conseil apparaîtra après l'analyse des données.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Graphique 1X2</h3>
+      <canvas id="resultChart"></canvas>
+    </div>
+
+    <div class="card">
+      <h3>Graphique des buts</h3>
+      <canvas id="goalsChart"></canvas>
+    </div>
+
+    <div class="card">
+      <h3>Graphique des scores exacts</h3>
+      <canvas id="scoreChart"></canvas>
+    </div>
+  </section>
+
+  <!-- HISTORIQUE -->
+  <section id="history" class="page">
+    <h2>Historique des analyses</h2>
+
+    <div class="card">
       <button id="clearHistory" type="button">
         Effacer l'historique
       </button>
@@ -108,43 +177,38 @@
       <div id="historyList">
         Aucune analyse enregistrée.
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- BOOKMAKERS -->
-    <section id="bookmaker" class="page">
-      <h2>Comparaison des bookmakers</h2>
+  <!-- COTES -->
+  <section id="bookmaker" class="page">
+    <h2>Comparaison des cotes bookmaker</h2>
 
-      <p>Entre les cotes 1X2 du bookmaker.</p>
+    <div class="card">
+      <label for="bookHome">Cote victoire domicile (1)</label>
+      <input id="bookHome" type="number" step="0.01" placeholder="Exemple : 2.10">
 
-      <label for="bookHome">Victoire domicile</label>
-      <input id="bookHome" type="number" min="1.01" step="0.01" placeholder="Exemple : 2.10">
+      <label for="bookDraw">Cote match nul (X)</label>
+      <input id="bookDraw" type="number" step="0.01" placeholder="Exemple : 3.20">
 
-      <label for="bookDraw">Match nul</label>
-      <input id="bookDraw" type="number" min="1.01" step="0.01" placeholder="Exemple : 3.20">
-
-      <label for="bookAway">Victoire extérieur</label>
-      <input id="bookAway" type="number" min="1.01" step="0.01" placeholder="Exemple : 3.50">
+      <label for="bookAway">Cote victoire extérieur (2)</label>
+      <input id="bookAway" type="number" step="0.01" placeholder="Exemple : 3.50">
 
       <button id="compareButton" type="button">
-        Comparer les cotes
+        COMPARER LES COTES
       </button>
 
-      <div id="bookResult">
-        Les résultats de la comparaison apparaîtront ici.
-      </div>
-    </section>
+      <div id="bookResult"></div>
+    </div>
+  </section>
 
-  </main>
+</main>
 
-  <footer>
-    <p>FOOTBALL EXPERT PRO © 2026</p>
-    <p>Les pronostics sont des estimations statistiques et ne garantissent aucun résultat.</p>
-  </footer>
+<footer class="footer">
+  <p>FOOTBALL EXPERT PRO © 2026</p>
+  <p>Les pronostics sont des estimations statistiques, pas des garanties.</p>
+</footer>
 
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="script.js"></script>
-
 </body>
 </html>
