@@ -1,6 +1,11 @@
+/* =====================================================
+   FOOTBALL EXPERT PRO
+   Moteur de pronostics statistiques
+   Source de données : TheSportsDB
+   ===================================================== */
 
-const API = "https://www.thesportsdb.com/api/v1/json/123";
-const REQUIRED_MATCHES = 5;
+const API_KEY = "123";
+const API = `https://www.thesportsdb.com/api/v1/json/${API_KEY}`;
 
 const LEAGUES = [
   { name: "Premier League", id: "4328" },
@@ -14,33 +19,507 @@ const LEAGUES = [
 const $ = id => document.getElementById(id);
 
 let allMatches = [];
-let currentPredictions = null;
-let resultChart = null;
-let goalsChart = null;
-let scoreChart = null;
-let dashboardChart = null;
+let charts = {};
 
-function escapeHTML(value) {
-  return String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;"
-  })[char]);
+function showMessage(element, message, type = "") {
+  if (!element) return;
+  element.textContent = message;
+  element.className = type;
 }
 
-async function getJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Erreur réseau");
-  return response.json();
+async function apiRequest(endpoint) {
+  const response = await fetch(`${API}/${endpoint}`);
+  if (!response.ok) throw new Error("Erreur de connexion à la source de données.");
+  const data = await response.json();
+  return data;
 }
+
+function getEvents(data) {
+  return data?.results || data?.events || [];
+}
+
+function validScore(event) {
+  return event &&
+    event.intHomeScore !== null &&
+    event.intAwayScore !== null &&
+    event.intHomeScore !== "" &&
+    event.intAwayScore !== "" &&
+    Number.isFinite(Number(event.intHomeScore)) &&
+    Number.isFinite(Number(event.intAwayScore));
+}
+
+/* ------------------ MATCHS À VENIR ------------------ */
+
+async function loadMatches() {
+  const list = $("matchList");
+  if (list) list.innerHTML = "<p>Chargement des matchs...</p>";
+
+  allMatches = [];
+
+  try {
+    const results = await Promise.all(
+      LEAGUES.map(async league => {
+        try {
+          const data = await apiRequest(
+            `eventsnextleague.php?id=${league.id}`
+          );
+          return getEvents(data).map(event => ({
+            ...event,
+            leagueName: league.name
+          }));
+        } catch (error) {
+          console.warn("Championnat indisponible :", league.name, error);
+          return [];
+        }
+      })
+    );
+
+    const unique = new Map();
+
+    results.flat().forEach(match => {
+      if (match.idEvent) unique.set(match.idEvent, match);
+    });
+
+    allMatches = [...unique.values()];
+
+    allMatches.sort((a, b) => {
+      const dateA = new Date(`${a.date || ""}T${a.strTime || "00:00:00"}`);
+      const dateB = new Date(`${b.date || ""}T${b.strTime || "00:00:00"}`);
+      return dateA - dateB;
+    });
+
+    renderMatches();
+
+    if ($("matchCount")) $("matchCount").textContent = allMatches.length;
+    if ($("leagueCount")) {
+      const count = new Set(allMatches.map(m => m.leagueName)).size;
+      $("leagueCount").textContent = count;
+    }
+  } catch (error) {
+    if (list) list.innerHTML =
+      "<p>Impossible de charger les matchs. Réessaie plus tard.</p>";
+  }
+}
+
+function renderMatches() {
+  const list = $("matchList");
+  if (!list) return;
+
+  if (!allMatches.length) {
+    list.innerHTML = "<p>Aucun match disponible pour le moment.</p>";
+    return;
+  }
+
+  list.innerHTML = allMatches.map(match => `
+    <article class="match-card">
+      <small>${escapeHTML(match.leagueName || "Football")}</small>
+      <h3>${escapeHTML(match.strHomeTeam || "Équipe domicile")}
+        - ${escapeHTML(match.strAwayTeam || "Équipe extérieure")}</h3>
+      <p>${escapeHTML(match.date || "")} ${escapeHTML(match.strTime || "")}</p>
+      <button type="button"
+        data-home="${escapeAttr(match.strHomeTeam || "")}"
+        data-away="${escapeAttr(match.strAwayTeam || "")}">
+        Analyser ce match
+      </button>
+    </article>
+  `).join("");
+
+  list.querySelectorAll("button[data-home]").forEach(button => {
+    button.addEventListener("click", () => {
+      if ($("manualHome")) $("manualHome").value = button.dataset.home;
+      if ($("manualAway")) $("manualAway").value = button.dataset.away;
+      analyzeMatch(button.dataset.home, button.dataset.away);
+    });
+  });
+}
+
+/* ------------------ RECHERCHE DES ÉQUIPES ------------------ */
+
+async function searchTeam(teamName) {
+  const data = await apiRequest(
+    `searchteams.php?t=${encodeURIComponent(teamName)}`
+  );
+
+  const teams = data?.teams || [];
+  if (!teams.length) return null;
+
+  const normalized = normalize(teamName);
+
+  return teams.find(team =>
+    normalize(team.strTeam) === normalized
+  ) || teams[0];
+}
+
+function normalize(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+async function getTeamHistory(teamName) {
+  const team = await searchTeam(teamName);
+
+  if (!team || !team.idTeam) {
+    throw new Error(`Équipe introuvable : ${teamName}`);
+  }
+
+  const data = await apiRequest(`eventslast.php?id=${team.idTeam}`);
+
+  const events = getEvents(data)
+    .filter(validScore)
+    .filter(event =>
+      event.idHomeTeam === team.idTeam ||
+      event.idAwayTeam === team.idTeam
+    )
+    .sort((a, b) => {
+      const dateA = new Date(a.date || 0);
+      const dateB = new Date(b.date || 0);
+      return dateB - dateA;
+    })
+    .slice(0, 5);
+
+  return {
+    teamId: team.idTeam,
+    teamName: team.strTeam,
+    events
+  };
+}
+
+/* ------------------ STATISTIQUES ------------------ */
+
+function getTeamStats(events, teamId) {
+  let goalsFor = 0;
+  let goalsAgainst = 0;
+  let wins = 0;
+  let draws = 0;
+  let losses = 0;
+
+  events.forEach(event => {
+    const home = Number(event.intHomeScore);
+    const away = Number(event.intAwayScore);
+    const isHome = event.idHomeTeam === teamId;
+
+    const scored = isHome ? home : away;
+    const conceded = isHome ? away : home;
+
+    goalsFor += scored;
+    goalsAgainst += conceded;
+
+    if (scored > conceded) wins++;
+    else if (scored === conceded) draws++;
+    else losses++;
+  });
+
+  const played = events.length;
+
+  return {
+    played,
+    goalsFor,
+    goalsAgainst,
+    wins,
+    draws,
+    losses,
+    averageFor: played ? goalsFor / played : 0,
+    averageAgainst: played ? goalsAgainst / played : 0
+  };
+}
+
+function displayLastFive(containerId, team) {
+  const container = $(containerId);
+  if (!container) return;
+
+  container.innerHTML = team.events.map(event => {
+    const isHome = event.idHomeTeam === team.teamId;
+    const opponent = isHome ? event.strAwayTeam : event.strHomeTeam;
+    const scored = isHome ? event.intHomeScore : event.intAwayScore;
+    const conceded = isHome ? event.intAwayScore : event.intHomeScore;
+
+    let result = "N";
+    if (Number(scored) > Number(conceded)) result = "V";
+    if (Number(scored) < Number(conceded)) result = "D";
+
+    return `
+      <div class="last-match">
+        <span>${escapeHTML(opponent || "Adversaire")}</span>
+        <strong>${scored} - ${conceded}</strong>
+        <b>${result}</b>
+      </div>
+    `;
+  }).join("");
+}
+
+/* ------------------ MODÈLE DE POISSON ------------------ */
+
+function factorial(number) {
+  if (number <= 1) return 1;
+  let result = 1;
+  for (let i = 2; i <= number; i++) result *= i;
+  return result;
+}
+
+function poisson(lambda, goals) {
+  return (
+    Math.exp(-lambda) *
+    Math.pow(lambda, goals) /
+    factorial(goals)
+  );
+}
+
+function calculatePredictions(homeStats, awayStats) {
+  /*
+    Estimation simple à partir des buts marqués et encaissés
+    sur les cinq derniers matchs. Ce n'est pas une garantie.
+  */
+
+  const homeLambda = Math.max(
+    0.15,
+    Math.min(4.5,
+      (homeStats.averageFor + awayStats.averageAgainst) / 2
+    )
+  );
+
+  const awayLambda = Math.max(
+    0.15,
+    Math.min(4.5,
+      (awayStats.averageFor + homeStats.averageAgainst) / 2
+    )
+  );
+
+  let homeWin = 0;
+  let draw = 0;
+  let awayWin = 0;
+  let bttsYes = 0;
+  let over25 = 0;
+  const scores = [];
+
+  for (let h = 0; h <= 8; h++) {
+    for (let a = 0; a <= 8; a++) {
+      const probability = poisson(homeLambda, h) *
+        poisson(awayLambda, a);
+
+      if (h > a) homeWin += probability;
+      else if (h === a) draw += probability;
+      else awayWin += probability;
+
+      if (h > 0 && a > 0) bttsYes += probability;
+      if (h + a >= 3) over25 += probability;
+
+      scores.push({
+        score: `${h}-${a}`,
+        probability
+      });
+    }
+  }
+
+  const total = homeWin + draw + awayWin;
+
+  scores.sort((a, b) => b.probability - a.probability);
+
+  return {
+    homeLambda,
+    awayLambda,
+    homeWin: homeWin / total,
+    draw: draw / total,
+    awayWin: awayWin / total,
+    bttsYes,
+    bttsNo: 1 - bttsYes,
+    over25,
+    under25: 1 - over25,
+    scores: scores.slice(0, 10)
+  };
+}
+
+/* ------------------ ANALYSE PRINCIPALE ------------------ */
+
+async function analyzeMatch(homeName, awayName) {
+  const output = $("analysisContent");
+
+  if (!homeName || !awayName) {
+    showMessage(output, "Entre le nom des deux équipes.");
+    return;
+  }
+
+  if (normalize(homeName) === normalize(awayName)) {
+    showMessage(output, "Choisis deux équipes différentes.");
+    return;
+  }
+
+  if (output) output.innerHTML = "<p>Analyse des deux équipes en cours...</p>";
+
+  try {
+    const [home, away] = await Promise.all([
+      getTeamHistory(homeName),
+      getTeamHistory(awayName)
+    ]);
+
+    displayLastFive("homeLastFive", home);
+    displayLastFive("awayLastFive", away);
+
+    if (home.events.length < 5 || away.events.length < 5) {
+      const message =
+        `Analyse impossible : ${home.teamName} possède ${home.events.length}/5 matchs ` +
+        `et ${away.teamName} possède ${away.events.length}/5 matchs exploitables. ` +
+        "Aucun pronostic ne sera inventé.";
+
+      if (output) output.innerHTML = `<p>${escapeHTML(message)}</p>`;
+      if ($("botAdvice")) $("botAdvice").textContent = message;
+      return;
+    }
+
+    const homeStats = getTeamStats(home.events, home.teamId);
+    const awayStats = getTeamStats(away.events, away.teamId);
+
+    const prediction = calculatePredictions(homeStats, awayStats);
+
+    renderAnalysis(home, away, homeStats, awayStats, prediction);
+    saveHistory({
+      date: new Date().toISOString(),
+      home: home.teamName,
+      away: away.teamName,
+      prediction
+    });
+
+    updateDashboard();
+  } catch (error) {
+    console.error(error);
+    if (output) {
+      output.innerHTML =
+        `<p>${escapeHTML(error.message || "Erreur pendant l'analyse.")}</p>`;
+    }
+  }
+}
+
+/* ------------------ AFFICHAGE DES PRONOSTICS ------------------ */
 
 function percent(value) {
-  return (value * 100).toFixed(1) + "%";
+  return `${(value * 100).toFixed(1)}%`;
 }
 
-// HISTORIQUE
+function renderAnalysis(home, away, hs, as, p) {
+  const output = $("analysisContent");
+
+  if (output) {
+    output.innerHTML = `
+      <h2>${escapeHTML(home.teamName)} - ${escapeHTML(away.teamName)}</h2>
+      <p>Matchs étudiés : 5 derniers matchs par équipe</p>
+
+      <h3>Pronostic 1X2</h3>
+      <div class="prediction-grid">
+        <div>1 (domicile)<strong>${percent(p.homeWin)}</strong></div>
+        <div>X (nul)<strong>${percent(p.draw)}</strong></div>
+        <div>2 (extérieur)<strong>${percent(p.awayWin)}</strong></div>
+      </div>
+
+      <h3>BTTS</h3>
+      <p>Oui : <strong>${percent(p.bttsYes)}</strong></p>
+      <p>Non : <strong>${percent(p.bttsNo)}</strong></p>
+
+      <h3>Over / Under 2,5</h3>
+      <p>Over 2,5 : <strong>${percent(p.over25)}</strong></p>
+      <p>Under 2,5 : <strong>${percent(p.under25)}</strong></p>
+
+      <h3>Les 10 scores exacts les plus probables</h3>
+      <ol>
+        ${p.scores.map(s =>
+          `<li>${s.score} : <strong>${percent(s.probability)}</strong></li>`
+        ).join("")}
+      </ol>
+
+      <p class="disclaimer">
+        Estimations statistiques basées sur les cinq derniers matchs disponibles.
+        Elles ne garantissent pas le résultat réel.
+      </p>
+    `;
+  }
+
+  if ($("scorePredictions")) {
+    $("scorePredictions").innerHTML = p.scores.map(s =>
+      `<div>${s.score} — ${percent(s.probability)}</div>`
+    ).join("");
+  }
+
+  if ($("botAdvice")) {
+    const best = [
+      ["1", p.homeWin],
+      ["X", p.draw],
+      ["2", p.awayWin]
+    ].sort((a, b) => b[1] - a[1])[0];
+
+    $("botAdvice").textContent =
+      `Issue la plus probable : ${best[0]} (${percent(best[1])}). ` +
+      `Buts attendus estimés : ${p.homeLambda.toFixed(2)} - ${p.awayLambda.toFixed(2)}. ` +
+      "Ce résultat reste incertain.";
+  }
+
+  if ($("analysisCount")) {
+    $("analysisCount").textContent = getHistory().length + 1;
+  }
+
+  drawAnalysisCharts(p, home.teamName, away.teamName, hs, as);
+}
+
+/* ------------------ GRAPHIQUES ------------------ */
+
+function createChart(id, config) {
+  const canvas = $(id);
+  if (!canvas || typeof Chart === "undefined") return;
+
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(canvas, config);
+}
+
+function drawAnalysisCharts(p, homeName, awayName, hs, as) {
+  createChart("resultChart", {
+    type: "bar",
+    data: {
+      labels: ["1", "Nul", "2"],
+      datasets: [{
+        label: "Probabilité (%)",
+        data: [
+          p.homeWin * 100,
+          p.draw * 100,
+          p.awayWin * 100
+        ]
+      }]
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
+  });
+
+  createChart("goalsChart", {
+    type: "bar",
+    data: {
+      labels: ["Buts marqués", "Buts encaissés"],
+      datasets: [
+        {
+          label: homeName,
+          data: [hs.averageFor, hs.averageAgainst]
+        },
+        {
+          label: awayName,
+          data: [as.averageFor, as.averageAgainst]
+        }
+      ]
+    },
+    options: { responsive: true }
+  });
+
+  createChart("scoreChart", {
+    type: "bar",
+    data: {
+      labels: p.scores.map(s => s.score),
+      datasets: [{
+        label: "Probabilité (%)",
+        data: p.scores.map(s => s.probability * 100)
+      }]
+    },
+    options: { responsive: true }
+  });
+}
+
+/* ------------------ HISTORIQUE ------------------ */
+
 function getHistory() {
   try {
     return JSON.parse(localStorage.getItem("fep_history") || "[]");
@@ -52,696 +531,161 @@ function getHistory() {
 function saveHistory(item) {
   const history = getHistory();
   history.unshift(item);
-  localStorage.setItem(
-    "fep_history",
-    JSON.stringify(history.slice(0, 100))
-  );
+  localStorage.setItem("fep_history", JSON.stringify(history.slice(0, 100)));
+  renderHistory();
+}
+
+function renderHistory() {
+  const container = $("historyList");
+  if (!container) return;
+
+  const history = getHistory();
+
+  if (!history.length) {
+    container.innerHTML = "<p>Aucune analyse enregistrée.</p>";
+    return;
+  }
+
+  container.innerHTML = history.map(item => `
+    <article class="history-card">
+      <strong>${escapeHTML(item.home)} - ${escapeHTML(item.away)}</strong>
+      <p>${new Date(item.date).toLocaleString()}</p>
+      <p>1 : ${percent(item.prediction.homeWin)} |
+         X : ${percent(item.prediction.draw)} |
+         2 : ${percent(item.prediction.awayWin)}</p>
+    </article>
+  `).join("");
+}
+
+function clearHistory() {
+  localStorage.removeItem("fep_history");
   renderHistory();
   updateDashboard();
 }
 
-// NAVIGATION
-document.querySelectorAll(".nav-btn").forEach(button => {
-  button.addEventListener("click", () => {
-    const page = button.dataset.page;
+/* ------------------ TABLEAU DE BORD ------------------ */
 
-    document.querySelectorAll(".page").forEach(section =>
-      section.classList.remove("active")
-    );
-
-    document.querySelectorAll(".nav-btn").forEach(item =>
-      item.classList.remove("active")
-    );
-
-    $(page)?.classList.add("active");
-    button.classList.add("active");
-
-    if (page === "history") renderHistory();
-    if (page === "dashboard") updateDashboard();
-  });
-});
-
-// CHARGEMENT DES MATCHS
-async function loadMatches() {
-  const container = $("matchList");
-  if (!container) return;
-
-  container.innerHTML = "<p>Chargement des rencontres...</p>";
-
-  const results = await Promise.all(LEAGUES.map(async league => {
-    try {
-      const data = await getJSON(
-        `${API}/eventsnextleague.php?id=${league.id}`
-      );
-
-      return (data.events || []).map(match => ({
-        ...match,
-        leagueName: league.name
-      }));
-    } catch (error) {
-      console.warn("Erreur championnat :", league.name, error);
-      return [];
-    }
-  }));
-
-  allMatches = results.flat().filter(match =>
-    match.strHomeTeam && match.strAwayTeam
-  );
-
-  // Éliminer les doublons
-  const unique = new Map();
-
-  allMatches.forEach(match => {
-    const key = [
-      match.idEvent,
-      match.strHomeTeam,
-      match.strAwayTeam,
-      match.dateEvent
-    ].join("_");
-
-    unique.set(key, match);
-  });
-
-  allMatches = [...unique.values()];
-
-  allMatches.sort((a, b) =>
-    new Date(a.dateEvent || 0) - new Date(b.dateEvent || 0)
-  );
-
-  if ($("matchCount")) {
-    $("matchCount").textContent = allMatches.length;
-  }
-
-  if (!allMatches.length) {
-    container.innerHTML =
-      "<p>Aucun match disponible pour le moment.</p>";
-  } else {
-    container.innerHTML = allMatches.map((match, index) => `
-      <article class="match-card">
-        <p>${escapeHTML(match.leagueName)}</p>
-        <h3>${escapeHTML(match.strHomeTeam)}</h3>
-        <p style="text-align:center">VS</p>
-        <h3>${escapeHTML(match.strAwayTeam)}</h3>
-        <p>📅 ${escapeHTML(match.dateEvent || "Date inconnue")}</p>
-        <button onclick="analyzeMatch(${index})">
-          ANALYSER CE MATCH
-        </button>
-      </article>
-    `).join("");
-  }
-
-  updateDashboard();
-}
-
-// RECHERCHE D'UNE ÉQUIPE
-async function getTeamHistory(teamName) {
-  const search = await getJSON(
-    `${API}/searchteams.php?t=${encodeURIComponent(teamName)}`
-  );
-
-  const teams = search.teams || [];
-
-  if (!teams.length) {
-    throw new Error("Équipe introuvable : " + teamName);
-  }
-
-  // Choisir le résultat dont le nom correspond le mieux
-  const normalized = teamName.trim().toLowerCase();
-
-  const team = teams.find(item =>
-    item.strTeam?.trim().toLowerCase() === normalized
-  ) || teams[0];
-
-  if (!team.idTeam) {
-    throw new Error("Identifiant de l'équipe indisponible.");
-  }
-
-  const data = await getJSON(
-    `${API}/eventslast.php?id=${team.idTeam}`
-  );
-
-  const events = (data.results || data.events || []).filter(event =>
-    event.intHomeScore !== null &&
-    event.intAwayScore !== null &&
-    event.intHomeScore !== "" &&
-    event.intAwayScore !== "" &&
-    Number.isFinite(Number(event.intHomeScore)) &&
-    Number.isFinite(Number(event.intAwayScore))
-  );
-
-  events.sort((a, b) =>
-    new Date(b.dateEvent || 0) - new Date(a.dateEvent || 0)
-  );
-
-  return {
-    teamId: String(team.idTeam),
-    teamName: team.strTeam,
-    events: events.slice(0, REQUIRED_MATCHES)
-  };
-}
-
-// STATISTIQUES PAR IDENTIFIANT D'ÉQUIPE
-function getTeamStats(events, teamId) {
-  let played = 0;
-  let goalsFor = 0;
-  let goalsAgainst = 0;
-  let wins = 0;
-  let draws = 0;
-  let losses = 0;
-
-  events.forEach(event => {
-    const homeId = String(event.idHomeTeam || "");
-    const awayId = String(event.idAwayTeam || "");
-
-    const isHome = homeId === String(teamId);
-    const isAway = awayId === String(teamId);
-
-    if (!isHome && !isAway) return;
-
-    const home = Number(event.intHomeScore);
-    const away = Number(event.intAwayScore);
-
-    const scored = isHome ? home : away;
-    const conceded = isHome ? away : home;
-
-    played++;
-    goalsFor += scored;
-    goalsAgainst += conceded;
-
-    if (scored > conceded) wins++;
-    else if (scored === conceded) draws++;
-    else losses++;
-  });
-
-  return {
-    played,
-    goalsFor,
-    goalsAgainst,
-    wins,
-    draws,
-    losses,
-    averageFor: played ? goalsFor / played : null,
-    averageAgainst: played ? goalsAgainst / played : null
-  };
-}
-
-function showTeamStats(team, stats) {
-  return `
-    <div class="card">
-      <h3>${escapeHTML(team)}</h3>
-      <p>Matchs récupérés : ${stats.played} / 5</p>
-      <p>Victoires : ${stats.wins}</p>
-      <p>Nuls : ${stats.draws}</p>
-      <p>Défaites : ${stats.losses}</p>
-      <p>Buts marqués : ${stats.goalsFor}</p>
-      <p>Buts encaissés : ${stats.goalsAgainst}</p>
-      ${stats.played ? `
-        <p>Moyenne marquée :
-          ${stats.averageFor.toFixed(2)}
-        </p>
-        <p>Moyenne encaissée :
-          ${stats.averageAgainst.toFixed(2)}
-        </p>
-      ` : ""}
-    </div>
-  `;
-}
-
-// CALCUL DE POISSON
-function poisson(lambda, goals) {
-  let factorial = 1;
-
-  for (let i = 2; i <= goals; i++) {
-    factorial *= i;
-  }
-
-  return Math.exp(-lambda) * Math.pow(lambda, goals) / factorial;
-}
-
-function calculateProbabilities(homeLambda, awayLambda) {
-  const scores = [];
-  let total = 0;
-
-  for (let home = 0; home <= 8; home++) {
-    for (let away = 0; away <= 8; away++) {
-      const probability =
-        poisson(homeLambda, home) *
-        poisson(awayLambda, away);
-
-      scores.push({ home, away, probability });
-      total += probability;
-    }
-  }
-
-  scores.forEach(item => {
-    item.probability /= total;
-  });
-
-  let homeWin = 0;
-  let draw = 0;
-  let awayWin = 0;
-  let bttsYes = 0;
-  let over25 = 0;
-
-  scores.forEach(item => {
-    const p = item.probability;
-
-    if (item.home > item.away) homeWin += p;
-    else if (item.home === item.away) draw += p;
-    else awayWin += p;
-
-    if (item.home > 0 && item.away > 0) bttsYes += p;
-    if (item.home + item.away >= 3) over25 += p;
-  });
-
-  return {
-    homeWin,
-    draw,
-    awayWin,
-    bttsYes,
-    over25,
-    scores: scores
-      .sort((a, b) => b.probability - a.probability)
-      .slice(0, 10)
-  };
-}
-
-// ANALYSE D'UN MATCH
-window.analyzeMatch = async function(index) {
-  const match = allMatches[index];
-  if (!match) return;
-
-  currentPredictions = null;
-
-  document.querySelector('[data-page="analysis"]')?.click();
-
-  const output = $("analysisContent");
-
-  output.innerHTML = `
-    <h3>Analyse en cours...</h3>
-    <p>Recherche des cinq derniers matchs de chaque équipe.</p>
-  `;
-
-  clearAnalysisCharts();
-
-  try {
-    const [homeData, awayData] = await Promise.all([
-      getTeamHistory(match.strHomeTeam),
-      getTeamHistory(match.strAwayTeam)
-    ]);
-
-    const homeStats = getTeamStats(
-      homeData.events,
-      homeData.teamId
-    );
-
-    const awayStats = getTeamStats(
-      awayData.events,
-      awayData.teamId
-    );
-
-    const availability = Math.round(
-      (
-        homeStats.played + awayStats.played
-      ) / (REQUIRED_MATCHES * 2) * 100
-    );
-
-    if (
-      homeStats.played < REQUIRED_MATCHES ||
-      awayStats.played < REQUIRED_MATCHES
-    ) {
-      output.innerHTML = `
-        <h2>${escapeHTML(match.strHomeTeam)}
-        VS ${escapeHTML(match.strAwayTeam)}</h2>
-
-        ${showTeamStats(match.strHomeTeam, homeStats)}
-        ${showTeamStats(match.strAwayTeam, awayStats)}
-
-        <h3>Données insuffisantes</h3>
-        <p>Disponibilité : ${availability}%</p>
-        <p>
-          Il faut cinq matchs terminés pour chaque équipe.
-          Aucun pronostic n'est généré.
-        </p>
-      `;
-      return;
-    }
-
-    const homeLambda = Math.max(
-      0.15,
-      Math.min(
-        4,
-        (
-          homeStats.averageFor +
-          awayStats.averageAgainst
-        ) / 2
-      )
-    );
-
-    const awayLambda = Math.max(
-      0.15,
-      Math.min(
-        4,
-        (
-          awayStats.averageFor +
-          homeStats.averageAgainst
-        ) / 2
-      )
-    );
-
-    const predictions = calculateProbabilities(
-      homeLambda,
-      awayLambda
-    );
-
-    currentPredictions = predictions;
-
-    output.innerHTML = `
-      <h2>${escapeHTML(match.strHomeTeam)}
-      VS ${escapeHTML(match.strAwayTeam)}</h2>
-
-      <p>Championnat : ${escapeHTML(match.leagueName)}</p>
-
-      <h3>Statistiques des équipes</h3>
-      ${showTeamStats(match.strHomeTeam, homeStats)}
-      ${showTeamStats(match.strAwayTeam, awayStats)}
-
-      <h3>Pronostics 1X2</h3>
-      <p>Domicile : ${percent(predictions.homeWin)}</p>
-      <p>Nul : ${percent(predictions.draw)}</p>
-      <p>Extérieur : ${percent(predictions.awayWin)}</p>
-
-      <h3>BTTS</h3>
-      <p>Oui : ${percent(predictions.bttsYes)}</p>
-      <p>Non : ${percent(1 - predictions.bttsYes)}</p>
-
-      <h3>Over / Under 2,5</h3>
-      <p>Over 2,5 : ${percent(predictions.over25)}</p>
-      <p>Under 2,5 : ${percent(1 - predictions.over25)}</p>
-
-      <h3>Les 10 scores exacts les plus probables</h3>
-      ${predictions.scores.map(item => `
-        <p>${item.home} - ${item.away} :
-        ${percent(item.probability)}</p>
-      `).join("")}
-
-      <p>Disponibilité des données : 100%</p>
-      <p>
-        Estimation mathématique fondée sur cinq matchs par équipe.
-        Elle ne garantit aucun résultat.
-      </p>
-    `;
-
-    drawCharts(predictions);
-
-    saveHistory({
-      home: match.strHomeTeam,
-      away: match.strAwayTeam,
-      league: match.leagueName,
-      date: new Date().toLocaleString("fr-FR"),
-      probabilities: {
-        homeWin: predictions.homeWin,
-        draw: predictions.draw,
-        awayWin: predictions.awayWin,
-        bttsYes: predictions.bttsYes,
-        over25: predictions.over25
-      },
-      scores: predictions.scores
-    });
-
-  } catch (error) {
-    console.error(error);
-
-    output.innerHTML = `
-      <h3>Analyse impossible</h3>
-      <p>${escapeHTML(error.message)}</p>
-      <p>
-        Vérifie le nom des équipes ou réessaie plus tard.
-        Aucun pronostic artificiel n'a été produit.
-      </p>
-    `;
-  }
-};
-
-// ANALYSE MANUELLE
-if ($("manualAnalyzeButton")) {
-  $("manualAnalyzeButton").addEventListener("click", () => {
-    const home = $("manualHome")?.value.trim();
-    const away = $("manualAway")?.value.trim();
-
-    if (!home || !away) {
-      alert("Entre le nom des deux équipes.");
-      return;
-    }
-
-    if (home.toLowerCase() === away.toLowerCase()) {
-      alert("Choisis deux équipes différentes.");
-      return;
-    }
-
-    const manualMatch = {
-      strHomeTeam: home,
-      strAwayTeam: away,
-      leagueName: "Analyse manuelle"
-    };
-
-    allMatches.push(manualMatch);
-    window.analyzeMatch(allMatches.length - 1);
-  });
-}
-
-// GRAPHIQUES
-function destroyChart(chart) {
-  if (chart) chart.destroy();
-}
-
-function clearAnalysisCharts() {
-  destroyChart(resultChart);
-  destroyChart(goalsChart);
-  destroyChart(scoreChart);
-
-  resultChart = null;
-  goalsChart = null;
-  scoreChart = null;
-}
-
-function drawCharts(predictions) {
-  if (typeof Chart === "undefined") return;
-
-  clearAnalysisCharts();
-
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        labels: { color: "#f4f6fb" }
-      }
-    },
-    scales: {
-      x: {
-        ticks: { color: "#c5d0df" }
-      },
-      y: {
-        beginAtZero: true,
-        ticks: { color: "#c5d0df" }
-      }
-    }
-  };
-
-  if ($("resultChart")) {
-    resultChart = new Chart($("resultChart"), {
-      type: "bar",
-      data: {
-        labels: ["Domicile", "Nul", "Extérieur"],
-        datasets: [{
-          label: "Probabilité (%)",
-          data: [
-            predictions.homeWin * 100,
-            predictions.draw * 100,
-            predictions.awayWin * 100
-          ]
-        }]
-      },
-      options
-    });
-  }
-
-  if ($("goalsChart")) {
-    goalsChart = new Chart($("goalsChart"), {
-      type: "doughnut",
-      data: {
-        labels: [
-          "BTTS Oui",
-          "BTTS Non",
-          "Over 2,5",
-          "Under 2,5"
-        ],
-        datasets: [{
-          data: [
-            predictions.bttsYes * 100,
-            (1 - predictions.bttsYes) * 100,
-            predictions.over25 * 100,
-            (1 - predictions.over25) * 100
-          ]
-        }]
-      },
-      options: { responsive: true }
-    });
-  }
-
-  if ($("scoreChart")) {
-    scoreChart = new Chart($("scoreChart"), {
-      type: "bar",
-      data: {
-        labels: predictions.scores.map(
-          item => `${item.home}-${item.away}`
-        ),
-        datasets: [{
-          label: "Probabilité (%)",
-          data: predictions.scores.map(
-            item => item.probability * 100
-          )
-        }]
-      },
-      options
-    });
-  }
-
-  drawDashboardChart();
-}
-
-// HISTORIQUE
-function renderHistory() {
+function updateDashboard() {
   const history = getHistory();
-  const container = $("historyList");
 
-  if (!container) return;
-
-  if (!history.length) {
-    container.innerHTML = "<p>Aucune analyse enregistrée.</p>";
-  } else {
-    container.innerHTML = history.map(item => `
-      <div class="match-card">
-        <h3>${escapeHTML(item.home)} VS ${escapeHTML(item.away)}</h3>
-        <p>${escapeHTML(item.league)}</p>
-        <p>${escapeHTML(item.date)}</p>
-        <p>Domicile : ${percent(item.probabilities.homeWin)}</p>
-        <p>Nul : ${percent(item.probabilities.draw)}</p>
-        <p>Extérieur : ${percent(item.probabilities.awayWin)}</p>
-      </div>
-    `).join("");
+  if ($("analysisCount")) {
+    $("analysisCount").textContent = history.length;
   }
 
   if ($("recentAnalyses")) {
-    $("recentAnalyses").innerHTML = history.slice(0, 3).map(item =>
-      `<p>${escapeHTML(item.home)} VS ${escapeHTML(item.away)}</p>`
-    ).join("") || "Aucune analyse enregistrée.";
+    $("recentAnalyses").innerHTML = history.slice(0, 5).map(item => `
+      <p>${escapeHTML(item.home)} - ${escapeHTML(item.away)}</p>
+    `).join("") || "<p>Aucune analyse récente.</p>";
   }
-}
 
-if ($("clearHistory")) {
-  $("clearHistory").addEventListener("click", () => {
-    if (confirm("Effacer tout l'historique ?")) {
-      localStorage.removeItem("fep_history");
-      renderHistory();
-      updateDashboard();
-    }
-  });
-}
-
-// TABLEAU DE BORD
-function drawDashboardChart() {
-  const history = getHistory();
-
-  if (
-    !history.length ||
-    typeof Chart === "undefined" ||
-    !$("dashboardChart")
-  ) return;
-
-  destroyChart(dashboardChart);
-
-  const latest = history[0].probabilities;
-
-  dashboardChart = new Chart($("dashboardChart"), {
-    type: "doughnut",
+  createChart("dashboardChart", {
+    type: "line",
     data: {
-      labels: ["Domicile", "Nul", "Extérieur"],
+      labels: history.slice(0, 10).reverse().map((_, i) => `Analyse ${i + 1}`),
       datasets: [{
-        data: [
-          latest.homeWin * 100,
-          latest.draw * 100,
-          latest.awayWin * 100
-        ]
+        label: "Probabilité de la meilleure issue (%)",
+        data: history.slice(0, 10).reverse().map(item =>
+          Math.max(
+            item.prediction.homeWin,
+            item.prediction.draw,
+            item.prediction.awayWin
+          ) * 100
+        )
       }]
     },
     options: { responsive: true }
   });
 }
 
-function updateDashboard() {
-  const history = getHistory();
+/* ------------------ COMPARAISON DES COTES ------------------ */
 
-  if ($("matchCount")) {
-    $("matchCount").textContent = allMatches.length;
+function compareOdds() {
+  const home = Number($("bookHome")?.value);
+  const draw = Number($("bookDraw")?.value);
+  const away = Number($("bookAway")?.value);
+  const result = $("bookResult");
+
+  if (!home || !draw || !away || home <= 1 || draw <= 1 || away <= 1) {
+    showMessage(result, "Entre trois cotes valides, supérieures à 1.");
+    return;
   }
 
-  if ($("analysisCount")) {
-    $("analysisCount").textContent = history.length;
-  }
+  const total = (1 / home) + (1 / draw) + (1 / away);
+  const margin = (total - 1) * 100;
 
-  if ($("leagueCount")) {
-    $("leagueCount").textContent = LEAGUES.length;
+  if (result) {
+    result.innerHTML = `
+      <p>Probabilité implicite 1 : ${percent((1 / home) / total)}</p>
+      <p>Probabilité implicite X : ${percent((1 / draw) / total)}</p>
+      <p>Probabilité implicite 2 : ${percent((1 / away) / total)}</p>
+      <p>Marge estimée du bookmaker : ${margin.toFixed(2)}%</p>
+    `;
   }
-
-  drawDashboardChart();
 }
 
-// COMPARAISON BOOKMAKERS
-if ($("compareButton")) {
-  $("compareButton").addEventListener("click", () => {
-    const home = Number($("bookHome")?.value);
-    const draw = Number($("bookDraw")?.value);
-    const away = Number($("bookAway")?.value);
-    const result = $("bookResult");
+/* ------------------ NAVIGATION ------------------ */
 
-    if (!currentPredictions) {
-      result.innerHTML =
-        "<p>Analyse d'abord un match avec les données suffisantes.</p>";
-      return;
-    }
+function setupNavigation() {
+  document.querySelectorAll("[data-page]").forEach(button => {
+    button.addEventListener("click", () => {
+      const page = button.dataset.page;
 
-    if ([home, draw, away].some(value =>
-      !Number.isFinite(value) || value <= 1
-    )) {
-      result.innerHTML =
-        "<p>Entre trois cotes valides supérieures à 1.</p>";
-      return;
-    }
+      document.querySelectorAll(".page").forEach(section => {
+        section.classList.remove("active");
+      });
 
-    const raw = [1 / home, 1 / draw, 1 / away];
-    const total = raw.reduce((sum, value) => sum + value, 0);
-    const fair = raw.map(value => value / total);
+      const target = $(page);
+      if (target) target.classList.add("active");
 
-    result.innerHTML = `
-      <h3>Probabilités des cotes</h3>
-      <p>Domicile : ${percent(fair[0])}</p>
-      <p>Nul : ${percent(fair[1])}</p>
-      <p>Extérieur : ${percent(fair[2])}</p>
+      document.querySelectorAll("[data-page]").forEach(item => {
+        item.classList.toggle("active", item === button);
+      });
 
-      <h3>Probabilités du modèle</h3>
-      <p>Domicile : ${percent(currentPredictions.homeWin)}</p>
-      <p>Nul : ${percent(currentPredictions.draw)}</p>
-      <p>Extérieur : ${percent(currentPredictions.awayWin)}</p>
-    `;
+      if (page === "history") renderHistory();
+      if (page === "dashboard") updateDashboard();
+    });
   });
 }
 
-// DÉMARRAGE
-if ($("today")) {
-  $("today").textContent = new Date().toLocaleDateString("fr-FR");
+/* ------------------ PROTECTION DU TEXTE HTML ------------------ */
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  })[char]);
 }
 
-renderHistory();
-updateDashboard();
-loadMatches();
+function escapeAttr(value) {
+  return escapeHTML(value);
+}
+
+/* ------------------ DÉMARRAGE ------------------ */
+
+document.addEventListener("DOMContentLoaded", () => {
+  setupNavigation();
+
+  if ($("manualAnalyzeButton")) {
+    $("manualAnalyzeButton").addEventListener("click", () => {
+      analyzeMatch(
+        $("manualHome")?.value.trim(),
+        $("manualAway")?.value.trim()
+      );
+    });
+  }
+
+  if ($("clearHistory")) {
+    $("clearHistory").addEventListener("click", clearHistory);
+  }
+
+  if ($("compareButton")) {
+    $("compareButton").addEventListener("click", compareOdds);
+  }
+
+  renderHistory();
+  loadMatches();
+  updateDashboard();
+});
