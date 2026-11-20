@@ -12,6 +12,7 @@ const LEAGUES = [
 ];
 
 const $ = id => document.getElementById(id);
+
 let allMatches = [];
 let currentPredictions = null;
 let resultChart = null;
@@ -21,8 +22,11 @@ let dashboardChart = null;
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;",
-    '"': "&quot;", "'": "&#039;"
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
   })[char]);
 }
 
@@ -32,6 +36,11 @@ async function getJSON(url) {
   return response.json();
 }
 
+function percent(value) {
+  return (value * 100).toFixed(1) + "%";
+}
+
+// HISTORIQUE
 function getHistory() {
   try {
     return JSON.parse(localStorage.getItem("fep_history") || "[]");
@@ -40,28 +49,30 @@ function getHistory() {
   }
 }
 
-function percent(value) {
-  return (value * 100).toFixed(1) + "%";
-}
-
 function saveHistory(item) {
   const history = getHistory();
   history.unshift(item);
-  localStorage.setItem("fep_history", JSON.stringify(history.slice(0, 100)));
-  updateDashboard();
+  localStorage.setItem(
+    "fep_history",
+    JSON.stringify(history.slice(0, 100))
+  );
   renderHistory();
+  updateDashboard();
 }
 
 // NAVIGATION
 document.querySelectorAll(".nav-btn").forEach(button => {
   button.addEventListener("click", () => {
     const page = button.dataset.page;
+
     document.querySelectorAll(".page").forEach(section =>
       section.classList.remove("active")
     );
+
     document.querySelectorAll(".nav-btn").forEach(item =>
       item.classList.remove("active")
     );
+
     $(page)?.classList.add("active");
     button.classList.add("active");
 
@@ -82,12 +93,13 @@ async function loadMatches() {
       const data = await getJSON(
         `${API}/eventsnextleague.php?id=${league.id}`
       );
+
       return (data.events || []).map(match => ({
         ...match,
         leagueName: league.name
       }));
     } catch (error) {
-      console.warn(league.name, error);
+      console.warn("Erreur championnat :", league.name, error);
       return [];
     }
   }));
@@ -95,6 +107,22 @@ async function loadMatches() {
   allMatches = results.flat().filter(match =>
     match.strHomeTeam && match.strAwayTeam
   );
+
+  // Éliminer les doublons
+  const unique = new Map();
+
+  allMatches.forEach(match => {
+    const key = [
+      match.idEvent,
+      match.strHomeTeam,
+      match.strAwayTeam,
+      match.dateEvent
+    ].join("_");
+
+    unique.set(key, match);
+  });
+
+  allMatches = [...unique.values()];
 
   allMatches.sort((a, b) =>
     new Date(a.dateEvent || 0) - new Date(b.dateEvent || 0)
@@ -106,7 +134,7 @@ async function loadMatches() {
 
   if (!allMatches.length) {
     container.innerHTML =
-      "<p>Aucun match disponible pour le moment. Réessaie plus tard.</p>";
+      "<p>Aucun match disponible pour le moment.</p>";
   } else {
     container.innerHTML = allMatches.map((match, index) => `
       <article class="match-card">
@@ -125,15 +153,27 @@ async function loadMatches() {
   updateDashboard();
 }
 
-// CINQ DERNIERS MATCHS TERMINÉS
+// RECHERCHE D'UNE ÉQUIPE
 async function getTeamHistory(teamName) {
   const search = await getJSON(
     `${API}/searchteams.php?t=${encodeURIComponent(teamName)}`
   );
 
-  const team = search.teams?.[0];
-  if (!team?.idTeam) {
+  const teams = search.teams || [];
+
+  if (!teams.length) {
     throw new Error("Équipe introuvable : " + teamName);
+  }
+
+  // Choisir le résultat dont le nom correspond le mieux
+  const normalized = teamName.trim().toLowerCase();
+
+  const team = teams.find(item =>
+    item.strTeam?.trim().toLowerCase() === normalized
+  ) || teams[0];
+
+  if (!team.idTeam) {
+    throw new Error("Identifiant de l'équipe indisponible.");
   }
 
   const data = await getJSON(
@@ -154,13 +194,14 @@ async function getTeamHistory(teamName) {
   );
 
   return {
-    teamId: team.idTeam,
+    teamId: String(team.idTeam),
+    teamName: team.strTeam,
     events: events.slice(0, REQUIRED_MATCHES)
   };
 }
 
-// STATISTIQUES DES ÉQUIPES
-function getTeamStats(events, teamName) {
+// STATISTIQUES PAR IDENTIFIANT D'ÉQUIPE
+function getTeamStats(events, teamId) {
   let played = 0;
   let goalsFor = 0;
   let goalsAgainst = 0;
@@ -168,14 +209,12 @@ function getTeamStats(events, teamName) {
   let draws = 0;
   let losses = 0;
 
-  const wanted = teamName.trim().toLowerCase();
-
   events.forEach(event => {
-    const homeName = (event.strHomeTeam || "").trim().toLowerCase();
-    const awayName = (event.strAwayTeam || "").trim().toLowerCase();
+    const homeId = String(event.idHomeTeam || "");
+    const awayId = String(event.idAwayTeam || "");
 
-    const isHome = homeName === wanted;
-    const isAway = awayName === wanted;
+    const isHome = homeId === String(teamId);
+    const isAway = awayId === String(teamId);
 
     if (!isHome && !isAway) return;
 
@@ -195,7 +234,12 @@ function getTeamStats(events, teamName) {
   });
 
   return {
-    played, goalsFor, goalsAgainst, wins, draws, losses,
+    played,
+    goalsFor,
+    goalsAgainst,
+    wins,
+    draws,
+    losses,
     averageFor: played ? goalsFor / played : null,
     averageAgainst: played ? goalsAgainst / played : null
   };
@@ -203,23 +247,34 @@ function getTeamStats(events, teamName) {
 
 function showTeamStats(team, stats) {
   return `
-    <p><strong>${escapeHTML(team)}</strong></p>
-    <p>Matchs analysés : ${stats.played} / 5</p>
-    <p>Victoires : ${stats.wins} | Nuls : ${stats.draws}
-    | Défaites : ${stats.losses}</p>
-    <p>Buts marqués : ${stats.goalsFor}
-    | Buts encaissés : ${stats.goalsAgainst}</p>
-    ${stats.played ? `
-      <p>Moyenne marquée : ${stats.averageFor.toFixed(2)}
-      | Moyenne encaissée : ${stats.averageAgainst.toFixed(2)}</p>
-    ` : ""}
+    <div class="card">
+      <h3>${escapeHTML(team)}</h3>
+      <p>Matchs récupérés : ${stats.played} / 5</p>
+      <p>Victoires : ${stats.wins}</p>
+      <p>Nuls : ${stats.draws}</p>
+      <p>Défaites : ${stats.losses}</p>
+      <p>Buts marqués : ${stats.goalsFor}</p>
+      <p>Buts encaissés : ${stats.goalsAgainst}</p>
+      ${stats.played ? `
+        <p>Moyenne marquée :
+          ${stats.averageFor.toFixed(2)}
+        </p>
+        <p>Moyenne encaissée :
+          ${stats.averageAgainst.toFixed(2)}
+        </p>
+      ` : ""}
+    </div>
   `;
 }
 
-// MODÈLE DE POISSON
+// CALCUL DE POISSON
 function poisson(lambda, goals) {
   let factorial = 1;
-  for (let i = 2; i <= goals; i++) factorial *= i;
+
+  for (let i = 2; i <= goals; i++) {
+    factorial *= i;
+  }
+
   return Math.exp(-lambda) * Math.pow(lambda, goals) / factorial;
 }
 
@@ -230,14 +285,17 @@ function calculateProbabilities(homeLambda, awayLambda) {
   for (let home = 0; home <= 8; home++) {
     for (let away = 0; away <= 8; away++) {
       const probability =
-        poisson(homeLambda, home) * poisson(awayLambda, away);
+        poisson(homeLambda, home) *
+        poisson(awayLambda, away);
 
       scores.push({ home, away, probability });
       total += probability;
     }
   }
 
-  scores.forEach(item => item.probability /= total);
+  scores.forEach(item => {
+    item.probability /= total;
+  });
 
   let homeWin = 0;
   let draw = 0;
@@ -257,7 +315,11 @@ function calculateProbabilities(homeLambda, awayLambda) {
   });
 
   return {
-    homeWin, draw, awayWin, bttsYes, over25,
+    homeWin,
+    draw,
+    awayWin,
+    bttsYes,
+    over25,
     scores: scores
       .sort((a, b) => b.probability - a.probability)
       .slice(0, 10)
@@ -270,13 +332,17 @@ window.analyzeMatch = async function(index) {
   if (!match) return;
 
   currentPredictions = null;
+
   document.querySelector('[data-page="analysis"]')?.click();
 
   const output = $("analysisContent");
+
   output.innerHTML = `
     <h3>Analyse en cours...</h3>
-    <p>Récupération des cinq derniers matchs de chaque équipe.</p>
+    <p>Recherche des cinq derniers matchs de chaque équipe.</p>
   `;
+
+  clearAnalysisCharts();
 
   try {
     const [homeData, awayData] = await Promise.all([
@@ -285,11 +351,19 @@ window.analyzeMatch = async function(index) {
     ]);
 
     const homeStats = getTeamStats(
-      homeData.events, match.strHomeTeam
+      homeData.events,
+      homeData.teamId
     );
 
     const awayStats = getTeamStats(
-      awayData.events, match.strAwayTeam
+      awayData.events,
+      awayData.teamId
+    );
+
+    const availability = Math.round(
+      (
+        homeStats.played + awayStats.played
+      ) / (REQUIRED_MATCHES * 2) * 100
     );
 
     if (
@@ -297,85 +371,85 @@ window.analyzeMatch = async function(index) {
       awayStats.played < REQUIRED_MATCHES
     ) {
       output.innerHTML = `
-        <div class="analysis-card">
-          <h2>${escapeHTML(match.strHomeTeam)}
-          VS ${escapeHTML(match.strAwayTeam)}</h2>
-          <p>Championnat : ${escapeHTML(match.leagueName)}</p>
+        <h2>${escapeHTML(match.strHomeTeam)}
+        VS ${escapeHTML(match.strAwayTeam)}</h2>
 
-          <h3>Statistiques réelles</h3>
-          ${showTeamStats(match.strHomeTeam, homeStats)}
-          ${showTeamStats(match.strAwayTeam, awayStats)}
+        ${showTeamStats(match.strHomeTeam, homeStats)}
+        ${showTeamStats(match.strAwayTeam, awayStats)}
 
-          <h3>Données insuffisantes</h3>
-          <p class="warning">
-            Cinq matchs terminés sont nécessaires pour chaque équipe.
-            Aucun pronostic n'est généré.
-          </p>
-          <p>Disponibilité des données :
-          ${Math.round(
-            Math.min(homeStats.played, awayStats.played) /
-            REQUIRED_MATCHES * 100
-          )}%</p>
-        </div>
+        <h3>Données insuffisantes</h3>
+        <p>Disponibilité : ${availability}%</p>
+        <p>
+          Il faut cinq matchs terminés pour chaque équipe.
+          Aucun pronostic n'est généré.
+        </p>
       `;
-
-      clearAnalysisCharts();
       return;
     }
 
-    // Estimation basée sur les moyennes observées
-    let homeLambda =
-      (homeStats.averageFor + awayStats.averageAgainst) / 2;
+    const homeLambda = Math.max(
+      0.15,
+      Math.min(
+        4,
+        (
+          homeStats.averageFor +
+          awayStats.averageAgainst
+        ) / 2
+      )
+    );
 
-    let awayLambda =
-      (awayStats.averageFor + homeStats.averageAgainst) / 2;
+    const awayLambda = Math.max(
+      0.15,
+      Math.min(
+        4,
+        (
+          awayStats.averageFor +
+          homeStats.averageAgainst
+        ) / 2
+      )
+    );
 
-    homeLambda = Math.max(0.15, Math.min(homeLambda, 4));
-    awayLambda = Math.max(0.15, Math.min(awayLambda, 4));
-
-    const predictions =
-      calculateProbabilities(homeLambda, awayLambda);
+    const predictions = calculateProbabilities(
+      homeLambda,
+      awayLambda
+    );
 
     currentPredictions = predictions;
 
     output.innerHTML = `
-      <div class="analysis-card">
-        <h2>${escapeHTML(match.strHomeTeam)}
-        VS ${escapeHTML(match.strAwayTeam)}</h2>
+      <h2>${escapeHTML(match.strHomeTeam)}
+      VS ${escapeHTML(match.strAwayTeam)}</h2>
 
-        <p>Championnat : ${escapeHTML(match.leagueName)}</p>
+      <p>Championnat : ${escapeHTML(match.leagueName)}</p>
 
-        <h3>Statistiques des cinq derniers matchs</h3>
-        ${showTeamStats(match.strHomeTeam, homeStats)}
-        ${showTeamStats(match.strAwayTeam, awayStats)}
+      <h3>Statistiques des équipes</h3>
+      ${showTeamStats(match.strHomeTeam, homeStats)}
+      ${showTeamStats(match.strAwayTeam, awayStats)}
 
-        <h3>Pronostics 1X2</h3>
-        <p>${escapeHTML(match.strHomeTeam)} :
-        ${percent(predictions.homeWin)}</p>
-        <p>Nul : ${percent(predictions.draw)}</p>
-        <p>${escapeHTML(match.strAwayTeam)} :
-        ${percent(predictions.awayWin)}</p>
+      <h3>Pronostics 1X2</h3>
+      <p>Domicile : ${percent(predictions.homeWin)}</p>
+      <p>Nul : ${percent(predictions.draw)}</p>
+      <p>Extérieur : ${percent(predictions.awayWin)}</p>
 
-        <h3>BTTS</h3>
-        <p>Oui : ${percent(predictions.bttsYes)}</p>
-        <p>Non : ${percent(1 - predictions.bttsYes)}</p>
+      <h3>BTTS</h3>
+      <p>Oui : ${percent(predictions.bttsYes)}</p>
+      <p>Non : ${percent(1 - predictions.bttsYes)}</p>
 
-        <h3>Over / Under 2,5</h3>
-        <p>Over 2,5 : ${percent(predictions.over25)}</p>
-        <p>Under 2,5 : ${percent(1 - predictions.over25)}</p>
+      <h3>Over / Under 2,5</h3>
+      <p>Over 2,5 : ${percent(predictions.over25)}</p>
+      <p>Under 2,5 : ${percent(1 - predictions.over25)}</p>
 
-        <h3>Les 10 scores exacts les plus probables</h3>
-        ${predictions.scores.map(item => `
-          <p>${item.home} - ${item.away} :
-          ${percent(item.probability)}</p>
-        `).join("")}
+      <h3>Les 10 scores exacts les plus probables</h3>
+      ${predictions.scores.map(item => `
+        <p>${item.home} - ${item.away} :
+        ${percent(item.probability)}</p>
+      `).join("")}
 
-        <h3>Disponibilité des données : 100%</h3>
-        <p class="warning">
-          Estimation mathématique basée sur cinq résultats récupérés
-          pour chaque équipe. Ce n'est pas une garantie.
-        </p>
-      </div>
+      <p>Disponibilité des données : 100%</p>
+      <p>
+        Estimation mathématique fondée sur cinq matchs par équipe.
+        Elle ne garantit aucun résultat.
+      </p>
     `;
 
     drawCharts(predictions);
@@ -397,16 +471,44 @@ window.analyzeMatch = async function(index) {
 
   } catch (error) {
     console.error(error);
+
     output.innerHTML = `
-      <p class="warning">
-        Impossible de récupérer les statistiques réelles.
-        Aucun pronostic n'a été fabriqué.
-        Vérifie ta connexion ou réessaie plus tard.
+      <h3>Analyse impossible</h3>
+      <p>${escapeHTML(error.message)}</p>
+      <p>
+        Vérifie le nom des équipes ou réessaie plus tard.
+        Aucun pronostic artificiel n'a été produit.
       </p>
     `;
-    clearAnalysisCharts();
   }
 };
+
+// ANALYSE MANUELLE
+if ($("manualAnalyzeButton")) {
+  $("manualAnalyzeButton").addEventListener("click", () => {
+    const home = $("manualHome")?.value.trim();
+    const away = $("manualAway")?.value.trim();
+
+    if (!home || !away) {
+      alert("Entre le nom des deux équipes.");
+      return;
+    }
+
+    if (home.toLowerCase() === away.toLowerCase()) {
+      alert("Choisis deux équipes différentes.");
+      return;
+    }
+
+    const manualMatch = {
+      strHomeTeam: home,
+      strAwayTeam: away,
+      leagueName: "Analyse manuelle"
+    };
+
+    allMatches.push(manualMatch);
+    window.analyzeMatch(allMatches.length - 1);
+  });
+}
 
 // GRAPHIQUES
 function destroyChart(chart) {
@@ -417,26 +519,32 @@ function clearAnalysisCharts() {
   destroyChart(resultChart);
   destroyChart(goalsChart);
   destroyChart(scoreChart);
-  resultChart = goalsChart = scoreChart = null;
+
+  resultChart = null;
+  goalsChart = null;
+  scoreChart = null;
 }
 
 function drawCharts(predictions) {
-  if (typeof Chart === "undefined") {
-    $("analysisContent").innerHTML +=
-      "<p>Les graphiques ne sont pas disponibles.</p>";
-    return;
-  }
+  if (typeof Chart === "undefined") return;
 
   clearAnalysisCharts();
 
   const options = {
     responsive: true,
     plugins: {
-      legend: { labels: { color: "#f4f6fb" } }
+      legend: {
+        labels: { color: "#f4f6fb" }
+      }
     },
     scales: {
-      x: { ticks: { color: "#c5d0df" } },
-      y: { beginAtZero: true, ticks: { color: "#c5d0df" } }
+      x: {
+        ticks: { color: "#c5d0df" }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { color: "#c5d0df" }
+      }
     }
   };
 
@@ -462,7 +570,12 @@ function drawCharts(predictions) {
     goalsChart = new Chart($("goalsChart"), {
       type: "doughnut",
       data: {
-        labels: ["BTTS Oui", "BTTS Non", "Over 2,5", "Under 2,5"],
+        labels: [
+          "BTTS Oui",
+          "BTTS Non",
+          "Over 2,5",
+          "Under 2,5"
+        ],
         datasets: [{
           data: [
             predictions.bttsYes * 100,
@@ -501,10 +614,11 @@ function drawCharts(predictions) {
 function renderHistory() {
   const history = getHistory();
   const container = $("historyList");
+
   if (!container) return;
 
   if (!history.length) {
-    container.innerHTML = "Aucune analyse enregistrée.";
+    container.innerHTML = "<p>Aucune analyse enregistrée.</p>";
   } else {
     container.innerHTML = history.map(item => `
       <div class="match-card">
@@ -520,15 +634,14 @@ function renderHistory() {
 
   if ($("recentAnalyses")) {
     $("recentAnalyses").innerHTML = history.slice(0, 3).map(item =>
-      `<p>${escapeHTML(item.home)} VS
-      ${escapeHTML(item.away)} — ${escapeHTML(item.date)}</p>`
+      `<p>${escapeHTML(item.home)} VS ${escapeHTML(item.away)}</p>`
     ).join("") || "Aucune analyse enregistrée.";
   }
 }
 
 if ($("clearHistory")) {
   $("clearHistory").addEventListener("click", () => {
-    if (confirm("Veux-tu vraiment effacer tout l'historique ?")) {
+    if (confirm("Effacer tout l'historique ?")) {
       localStorage.removeItem("fep_history");
       renderHistory();
       updateDashboard();
@@ -564,10 +677,6 @@ function drawDashboardChart() {
     },
     options: { responsive: true }
   });
-
-  if ($("emptyDashboard")) {
-    $("emptyDashboard").style.display = "none";
-  }
 }
 
 function updateDashboard() {
@@ -585,27 +694,20 @@ function updateDashboard() {
     $("leagueCount").textContent = LEAGUES.length;
   }
 
-  if ($("recentAnalyses")) {
-    $("recentAnalyses").innerHTML = history.slice(0, 3).map(item =>
-      `<p>${escapeHTML(item.home)} VS
-      ${escapeHTML(item.away)} — ${escapeHTML(item.date)}</p>`
-    ).join("") || "Aucune analyse enregistrée.";
-  }
-
   drawDashboardChart();
 }
 
 // COMPARAISON BOOKMAKERS
 if ($("compareButton")) {
   $("compareButton").addEventListener("click", () => {
-    const home = Number($("bookHome").value);
-    const draw = Number($("bookDraw").value);
-    const away = Number($("bookAway").value);
+    const home = Number($("bookHome")?.value);
+    const draw = Number($("bookDraw")?.value);
+    const away = Number($("bookAway")?.value);
     const result = $("bookResult");
 
     if (!currentPredictions) {
       result.innerHTML =
-        "<p>Analyse d'abord un match avec cinq matchs réels par équipe.</p>";
+        "<p>Analyse d'abord un match avec les données suffisantes.</p>";
       return;
     }
 
@@ -622,7 +724,7 @@ if ($("compareButton")) {
     const fair = raw.map(value => value / total);
 
     result.innerHTML = `
-      <h3>Probabilités estimées par les cotes</h3>
+      <h3>Probabilités des cotes</h3>
       <p>Domicile : ${percent(fair[0])}</p>
       <p>Nul : ${percent(fair[1])}</p>
       <p>Extérieur : ${percent(fair[2])}</p>
@@ -631,8 +733,6 @@ if ($("compareButton")) {
       <p>Domicile : ${percent(currentPredictions.homeWin)}</p>
       <p>Nul : ${percent(currentPredictions.draw)}</p>
       <p>Extérieur : ${percent(currentPredictions.awayWin)}</p>
-
-      <p>Comparaison indicative uniquement, sans garantie de gain.</p>
     `;
   });
 }
