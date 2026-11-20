@@ -85,4 +85,4 @@ function analyzeMatch(match) {
 }
 
 loadMatches();
-script.js.
+script.js
