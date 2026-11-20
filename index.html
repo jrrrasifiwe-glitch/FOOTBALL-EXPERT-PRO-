@@ -4,154 +4,147 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#08111f">
+  <meta name="theme-color" content="#101827">
+  <meta name="description" content="FOOTBALL EXPERT PRO : analyses et statistiques gratuites des matchs de football.">
   <title>FOOTBALL EXPERT PRO</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-icon">⚽</div>
-      <div>
-        <h1>FOOTBALL EXPERT <span>PRO</span></h1>
-        <small>PLATEFORME D'ANALYSE FOOTBALL</small>
-      </div>
-    </div>
-    <div class="status"><i></i> SYSTÈME ACTIF</div>
+
+<div class="app">
+
+  <header class="header">
+    <h1>⚽ FOOTBALL EXPERT PRO</h1>
+    <p>Analyse intelligente des matchs de football</p>
+    <p id="today"></p>
   </header>
 
-  <div class="layout">
-    <aside class="sidebar">
-      <h3>MENU PRINCIPAL</h3>
-      <button class="nav-btn active" data-page="dashboard">▦ Tableau de bord</button>
-      <button class="nav-btn" data-page="matches">⚽ Matchs</button>
-      <button class="nav-btn" data-page="analysis">▤ Analyses</button>
-      <button class="nav-btn" data-page="history">◷ Historique</button>
-      <button class="nav-btn" data-page="bookmaker">◎ Bookmaker</button>
-      <div class="sidebar-bottom">
-        <p>FOOTBALL EXPERT PRO</p>
-        <small>Version gratuite</small>
+  <nav class="navigation">
+    <button class="nav-btn active" data-page="dashboard">Tableau de bord</button>
+    <button class="nav-btn" data-page="matches">Matchs</button>
+    <button class="nav-btn" data-page="analysis">Analyses</button>
+    <button class="nav-btn" data-page="history">Historique</button>
+    <button class="nav-btn" data-page="bookmaker">Bookmakers</button>
+  </nav>
+
+  <main>
+
+    <!-- TABLEAU DE BORD -->
+    <section id="dashboard" class="page active">
+      <h2>Tableau de bord</h2>
+
+      <div class="dashboard-cards">
+        <div class="card">
+          <h3>Matchs disponibles</h3>
+          <p id="matchCount">0</p>
+        </div>
+
+        <div class="card">
+          <h3>Analyses réalisées</h3>
+          <p id="analysisCount">0</p>
+        </div>
+
+        <div class="card">
+          <h3>Championnats</h3>
+          <p id="leagueCount">6</p>
+        </div>
       </div>
-    </aside>
 
-    <main class="main">
-      <section id="dashboard" class="page active">
-        <div class="welcome">
-          <div>
-            <p class="eyebrow">CENTRE DE CONTRÔLE</p>
-            <h2>Tableau de bord</h2>
-            <p>Bienvenue sur votre plateforme de pronostics.</p>
-          </div>
-          <span class="date" id="today"></span>
-        </div>
+      <h3>Dernières analyses</h3>
+      <div id="recentAnalyses">
+        Aucune analyse enregistrée.
+      </div>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <span>Matchs disponibles</span>
-            <strong id="matchCount">0</strong>
-            <small>Rencontres chargées</small>
-          </div>
-          <div class="stat-card">
-            <span>Analyses réalisées</span>
-            <strong id="analysisCount">0</strong>
-            <small>Analyses enregistrées</small>
-          </div>
-          <div class="stat-card">
-            <span>Championnats</span>
-            <strong id="leagueCount">6</strong>
-            <small>Compétitions suivies</small>
-          </div>
-        </div>
+      <h3>Graphique des pronostics</h3>
+      <canvas id="dashboardChart"></canvas>
+    </section>
 
-        <div class="section-heading">
-          <div><h3>Vue générale</h3><p>Activité de votre plateforme</p></div>
+    <!-- MATCHS -->
+    <section id="matches" class="page">
+      <h2>Matchs à venir</h2>
+      <p>Rencontres disponibles dans les 6 championnats.</p>
+      <div id="matchList">
+        Chargement des matchs...
+      </div>
+    </section>
+
+    <!-- ANALYSES -->
+    <section id="analysis" class="page">
+      <h2>Analyse des matchs</h2>
+
+      <div id="analysisContent">
+        <p>Sélectionne un match dans la rubrique Matchs pour commencer.</p>
+      </div>
+
+      <div class="charts">
+        <div class="card">
+          <h3>Probabilités 1X2</h3>
+          <canvas id="resultChart"></canvas>
         </div>
 
-        <div class="panel">
-          <h3>Répartition des analyses</h3>
-          <canvas id="dashboardChart"></canvas>
-          <p id="emptyDashboard">Les graphiques apparaîtront après vos premières analyses.</p>
+        <div class="card">
+          <h3>BTTS et buts</h3>
+          <canvas id="goalsChart"></canvas>
         </div>
 
-        <div class="panel">
-          <h3>Dernières analyses</h3>
-          <div id="recentAnalyses">Aucune analyse enregistrée.</div>
+        <div class="card">
+          <h3>Scores exacts</h3>
+          <canvas id="scoreChart"></canvas>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section id="matches" class="page">
-        <div class="welcome">
-          <div><p class="eyebrow">RENCONTRES</p><h2>Matchs disponibles</h2>
-          <p>Sélectionnez un match pour l'analyser.</p></div>
-        </div>
-        <div id="matchList" class="match-grid">
-          <p>Chargement des matchs...</p>
-        </div>
-      </section>
+    <!-- HISTORIQUE -->
+    <section id="history" class="page">
+      <h2>Historique des analyses</h2>
 
-      <section id="analysis" class="page">
-        <div class="welcome">
-          <div><p class="eyebrow">INTELLIGENCE FOOTBALL</p>
-          <h2>Analyse du match</h2>
-          <p>Probabilités, statistiques et scores possibles.</p></div>
-        </div>
-        <div id="analysisContent" class="panel">
-          Sélectionnez un match dans la rubrique Matchs.
-        </div>
-        <div class="charts-grid">
-          <div class="panel">
-            <h3>Probabilités 1X2</h3>
-            <canvas id="resultChart"></canvas>
-          </div>
-          <div class="panel">
-            <h3>BTTS et buts</h3>
-            <canvas id="goalsChart"></canvas>
-          </div>
-          <div class="panel full-panel">
-            <h3>Probabilités des scores exacts</h3>
-            <canvas id="scoreChart"></canvas>
-          </div>
-        </div>
-      </section>
+      <p>Retrouve ici les analyses enregistrées sur cet appareil.</p>
 
-      <section id="history" class="page">
-        <div class="welcome">
-          <div><p class="eyebrow">ARCHIVES</p><h2>Historique des analyses</h2>
-          <p>Retrouvez vos analyses précédentes sur cet appareil.</p></div>
-        </div>
-        <div class="panel">
-          <div class="section-heading">
-            <h3>Mes analyses</h3>
-            <button id="clearHistory" class="danger-btn">Effacer l'historique</button>
-          </div>
-          <div id="historyList">Aucune analyse enregistrée.</div>
-        </div>
-      </section>
+      <button id="clearHistory" type="button">
+        Effacer l'historique
+      </button>
 
-      <section id="bookmaker" class="page">
-        <div class="welcome">
-          <div><p class="eyebrow">COMPARATEUR</p><h2>Comparaison bookmaker</h2>
-          <p>Comparez les cotes avec les probabilités du modèle.</p></div>
-        </div>
-        <div class="panel">
-          <p>Les cotes doivent être saisies manuellement.</p>
-          <label>Cote victoire domicile</label>
-          <input type="number" id="bookHome" placeholder="Ex : 2.10">
-          <label>Cote match nul</label>
-          <input type="number" id="bookDraw" placeholder="Ex : 3.20">
-          <label>Cote victoire extérieur</label>
-          <input type="number" id="bookAway" placeholder="Ex : 3.50">
-          <button id="compareButton" class="primary-btn">Comparer les cotes</button>
-          <div id="bookResult"></div>
-        </div>
-      </section>
+      <div id="historyList">
+        Aucune analyse enregistrée.
+      </div>
+    </section>
 
-      <footer>FOOTBALL EXPERT PRO © 2026 — Les pronostics sont des estimations, pas des garanties.</footer>
-    </main>
-  </div>
+    <!-- BOOKMAKERS -->
+    <section id="bookmaker" class="page">
+      <h2>Comparaison des bookmakers</h2>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      <p>Entre les cotes 1X2 du bookmaker.</p>
+
+      <label for="bookHome">Victoire domicile</label>
+      <input id="bookHome" type="number" min="1.01" step="0.01" placeholder="Exemple : 2.10">
+
+      <label for="bookDraw">Match nul</label>
+      <input id="bookDraw" type="number" min="1.01" step="0.01" placeholder="Exemple : 3.20">
+
+      <label for="bookAway">Victoire extérieur</label>
+      <input id="bookAway" type="number" min="1.01" step="0.01" placeholder="Exemple : 3.50">
+
+      <button id="compareButton" type="button">
+        Comparer les cotes
+      </button>
+
+      <div id="bookResult">
+        Les résultats de la comparaison apparaîtront ici.
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>FOOTBALL EXPERT PRO © 2026</p>
+    <p>Les pronostics sont des estimations statistiques et ne garantissent aucun résultat.</p>
+  </footer>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="script.js"></script>
+
 </body>
 </html>
